@@ -81,6 +81,18 @@ export function selectionRect(doc: GridDoc, sel: Selection): IndexRect | null {
   return base && expandRectOverMerges(doc, base).rect;
 }
 
+/** 選択範囲に含まれる行ID。ツールバーの「行削除」の対象＝画面で光っている行 */
+export function selectedRowIds(doc: GridDoc, sel: Selection): string[] {
+  const rect = selectionRect(doc, sel);
+  return rect ? doc.rows.slice(rect.r0, rect.r1 + 1).map((r) => r.id) : [];
+}
+
+/** 選択範囲に含まれる列ID */
+export function selectedColIds(doc: GridDoc, sel: Selection): string[] {
+  const rect = selectionRect(doc, sel);
+  return rect ? doc.cols.slice(rect.c0, rect.c1 + 1).map((c) => c.id) : [];
+}
+
 /** セルの編集用・表示用のraw文字列。数式は現在位置のA1形式で再生成する */
 export function cellRawString(doc: GridDoc, addr: CellAddr): string {
   const content = doc.cells[cellKey(addr)];

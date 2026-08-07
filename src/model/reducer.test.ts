@@ -176,7 +176,7 @@ describe("行列操作と参照の追従(安定IDの本領)", () => {
       s,
       { type: "setCell", addr: addr(s, 2, 0), raw: "7" },
       { type: "setCell", addr: addr(s, 0, 1), raw: "=A3" },
-      { type: "deleteRow", id: rowToDelete },
+      { type: "deleteRows", ids: [rowToDelete] },
     );
     expect(valueAt(s, 0, 1)).toBe("#REF!");
   });
@@ -186,10 +186,67 @@ describe("行列操作と参照の追従(安定IDの本領)", () => {
     const before = s.doc;
     s = run(
       s,
-      { type: "deleteRow", id: s.doc.rows[0].id },
-      { type: "deleteCol", id: s.doc.cols[0].id },
+      { type: "deleteRows", ids: [s.doc.rows[0].id] },
+      { type: "deleteCols", ids: [s.doc.cols[0].id] },
     );
     expect(s.doc).toBe(before);
+  });
+
+  it("選択範囲の複数行をまとめて削除し、undo 1手で元に戻る", () => {
+    let s = createInitialState(6, 3);
+    s = run(
+      s,
+      { type: "setCell", addr: addr(s, 0, 0), raw: "keep-top" },
+      { type: "setCell", addr: addr(s, 2, 0), raw: "gone" },
+      { type: "setCell", addr: addr(s, 5, 0), raw: "keep-bottom" },
+    );
+    const before = s.doc;
+    const ids = [s.doc.rows[1].id, s.doc.rows[2].id, s.doc.rows[3].id];
+    s = run(s, { type: "deleteRows", ids });
+
+    expect(s.doc.rows).toHaveLength(3);
+    expect(valueAt(s, 0, 0)).toBe("keep-top");
+    expect(valueAt(s, 2, 0)).toBe("keep-bottom");
+    expect(s.past).toHaveLength(4); // setCell×3 + 削除1手
+    expect(checkInvariants(s)).toEqual([]);
+
+    s = run(s, { type: "undo" });
+    expect(s.doc).toBe(before); // 1手で完全復元
+  });
+
+  it("重複IDや存在しないIDが混ざっても壊れない", () => {
+    let s = createInitialState(4, 3);
+    const dup = s.doc.rows[1].id;
+    s = run(s, { type: "deleteRows", ids: [dup, dup, "r999", s.doc.rows[2].id] });
+    expect(s.doc.rows).toHaveLength(2);
+    expect(checkInvariants(s)).toEqual([]);
+  });
+
+  it("全行を指定した削除は拒否される(空のグリッドを作らない)", () => {
+    let s = createInitialState(3, 3);
+    const before = s.doc;
+    s = run(s, { type: "deleteRows", ids: s.doc.rows.map((r) => r.id) });
+    expect(s.doc).toBe(before);
+    s = run(s, { type: "deleteCols", ids: s.doc.cols.map((c) => c.id) });
+    expect(s.doc).toBe(before);
+  });
+
+  it("複数行の挿入も1手として積まれ、IDが衝突しない", () => {
+    let s = createInitialState(3, 3);
+    s = run(s, { type: "insertRow", index: 1, count: 3 });
+    expect(s.doc.rows).toHaveLength(6);
+    expect(new Set(s.doc.rows.map((r) => r.id)).size).toBe(6);
+    expect(s.past).toHaveLength(1);
+    expect(checkInvariants(s)).toEqual([]);
+  });
+
+  it("複数行削除でも結合セルの角が正しく付け替わる", () => {
+    let s = createInitialState(6, 3);
+    s = run(s, { type: "merge", anchor: addr(s, 1, 0), focus: addr(s, 4, 1) });
+    // 結合の上端を含む2行を消す → 結合は残り、角が生き残る行に寄る
+    s = run(s, { type: "deleteRows", ids: [s.doc.rows[1].id, s.doc.rows[2].id] });
+    expect(s.doc.merges).toHaveLength(1);
+    expect(checkInvariants(s)).toEqual([]);
   });
 
   it("リサイズは最小値でクランプされる", () => {
@@ -242,7 +299,7 @@ describe("セル結合", () => {
   it("結合のアンカー行を削除すると次の行がアンカーになる", () => {
     let s = createInitialState(5, 5);
     s = run(s, { type: "merge", anchor: addr(s, 0, 0), focus: addr(s, 2, 1) });
-    s = run(s, { type: "deleteRow", id: s.doc.rows[0].id });
+    s = run(s, { type: "deleteRows", ids: [s.doc.rows[0].id] });
     expect(s.doc.merges).toHaveLength(1);
     expect(s.doc.merges[0].r0).toBe(s.doc.rows[0].id);
     expect(checkInvariants(s)).toEqual([]);
@@ -251,7 +308,7 @@ describe("セル結合", () => {
   it("縦2セル結合の1行を消すと結合自体が消える", () => {
     let s = createInitialState(5, 5);
     s = run(s, { type: "merge", anchor: addr(s, 0, 0), focus: addr(s, 1, 0) });
-    s = run(s, { type: "deleteRow", id: s.doc.rows[0].id });
+    s = run(s, { type: "deleteRows", ids: [s.doc.rows[0].id] });
     expect(s.doc.merges).toHaveLength(0);
     expect(checkInvariants(s)).toEqual([]);
   });

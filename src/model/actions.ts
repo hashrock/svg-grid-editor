@@ -21,11 +21,12 @@ export type Action =
   | { type: "setDraft"; draft: string }
   | { type: "commitEdit" }
   | { type: "cancelEdit" }
-  // 行・列
-  | { type: "insertRow"; index: number }
-  | { type: "insertCol"; index: number }
-  | { type: "deleteRow"; id: RowId }
-  | { type: "deleteCol"; id: ColId }
+  // 行・列。挿入・削除とも選択範囲ぶんをまとめて1操作として扱う
+  // (履歴にも1手として積まれる)
+  | { type: "insertRow"; index: number; count?: number }
+  | { type: "insertCol"; index: number; count?: number }
+  | { type: "deleteRows"; ids: RowId[] }
+  | { type: "deleteCols"; ids: ColId[] }
   | { type: "resizeRow"; id: RowId; height: number }
   | { type: "resizeCol"; id: ColId; width: number }
   // 結合

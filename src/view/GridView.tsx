@@ -48,6 +48,7 @@ export function GridView({ state, dispatch }: Props) {
   const { doc, selection, editing } = state;
   const svgRef = useRef<SVGSVGElement>(null);
   const dragAnchor = useRef<CellAddr | null>(null);
+  const headerDrag = useRef<{ kind: "row" | "col"; anchor: string } | null>(null);
   const editorRef = useRef<HTMLTextAreaElement>(null);
   const composing = useRef(false);
   // リサイズ中は履歴を汚さないようローカルにプレビューし、確定時のみ dispatch する
@@ -313,6 +314,24 @@ export function GridView({ state, dispatch }: Props) {
     dragAnchor.current = null;
   }
 
+  // ---- ヘッダのドラッグ選択(行・列をまとめて選ぶ) ----
+
+  function selectRowRange(anchorRow: string, focusRow: string) {
+    dispatch({
+      type: "setSelection",
+      anchor: { row: anchorRow, col: doc.cols[0].id },
+      focus: { row: focusRow, col: doc.cols[doc.cols.length - 1].id },
+    });
+  }
+
+  function selectColRange(anchorCol: string, focusCol: string) {
+    dispatch({
+      type: "setSelection",
+      anchor: { row: doc.rows[0].id, col: anchorCol },
+      focus: { row: doc.rows[doc.rows.length - 1].id, col: focusCol },
+    });
+  }
+
   function onCellDoubleClick(e: React.MouseEvent) {
     const p = svgPoint(e);
     const addr = cellAtPoint(p.x, p.y);
@@ -365,7 +384,10 @@ export function GridView({ state, dispatch }: Props) {
         width={totalW + 1}
         height={totalH + 1}
         onPointerMove={onResizeMove}
-        onPointerUp={endResize}
+        onPointerUp={() => {
+          endResize();
+          headerDrag.current = null;
+        }}
         onMouseDown={(e) => {
           // 既定の mousedown はフォーカスを body へ移してしまい、常設エディタが
           // キー入力を受け取れなくなる。編集中のテキストエリア自身へのクリック
@@ -491,13 +513,14 @@ export function GridView({ state, dispatch }: Props) {
                 stroke="#dadce0"
                 pointerEvents="all"
                 cursor="pointer"
-                onClick={() =>
-                  dispatch({
-                    type: "setSelection",
-                    anchor: { row: doc.rows[0].id, col: c.id },
-                    focus: { row: doc.rows[doc.rows.length - 1].id, col: c.id },
-                  })
-                }
+                onPointerDown={() => {
+                  headerDrag.current = { kind: "col", anchor: c.id };
+                  selectColRange(c.id, c.id);
+                }}
+                onPointerEnter={() => {
+                  const d = headerDrag.current;
+                  if (d?.kind === "col") selectColRange(d.anchor, c.id);
+                }}
               />
               <text
                 x={xs[ci] + colWidths[ci] / 2}
@@ -527,13 +550,14 @@ export function GridView({ state, dispatch }: Props) {
                 stroke="#dadce0"
                 pointerEvents="all"
                 cursor="pointer"
-                onClick={() =>
-                  dispatch({
-                    type: "setSelection",
-                    anchor: { row: r.id, col: doc.cols[0].id },
-                    focus: { row: r.id, col: doc.cols[doc.cols.length - 1].id },
-                  })
-                }
+                onPointerDown={() => {
+                  headerDrag.current = { kind: "row", anchor: r.id };
+                  selectRowRange(r.id, r.id);
+                }}
+                onPointerEnter={() => {
+                  const d = headerDrag.current;
+                  if (d?.kind === "row") selectRowRange(d.anchor, r.id);
+                }}
               />
               <text
                 x={HEADER_W / 2}

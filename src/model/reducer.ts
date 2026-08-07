@@ -223,21 +223,30 @@ const colOps: AxisOps = {
   boundsHi: (b) => b.c1,
 };
 
-function doInsertLine(state: GridState, ops: AxisOps, index: number): GridState {
+function doInsertLines(
+  state: GridState,
+  ops: AxisOps,
+  index: number,
+  count = 1,
+): GridState {
   const doc = state.doc;
-  if (!Number.isInteger(index)) return state;
+  if (!Number.isInteger(index) || !Number.isInteger(count) || count < 1) return state;
   const lines = ops.lines(doc);
   const at = Math.max(0, Math.min(lines.length, index));
-  const id = `${ops.idPrefix}${doc.idCounter}`;
-  const newLines = [...lines.slice(0, at), ops.newLine(id), ...lines.slice(at)];
-  return commitDoc(state, ops.withLines({ ...doc, idCounter: doc.idCounter + 1 }, newLines));
+  const added = Array.from({ length: count }, (_, i) =>
+    ops.newLine(`${ops.idPrefix}${doc.idCounter + i}`),
+  );
+  const newLines = [...lines.slice(0, at), ...added, ...lines.slice(at)];
+  return commitDoc(
+    state,
+    ops.withLines({ ...doc, idCounter: doc.idCounter + count }, newLines),
+  );
 }
 
-function doDeleteLine(state: GridState, ops: AxisOps, id: string): GridState {
-  const doc = state.doc;
-  const idx = ops.index(doc, id);
+/** 1本だけ削除した doc を返す純関数。削除できないときは doc をそのまま返す */
+function removeLine(doc: GridDoc, ops: AxisOps, id: string): GridDoc {
   const lines = ops.lines(doc);
-  if (idx < 0 || lines.length <= 1) return state;
+  if (ops.index(doc, id) < 0 || lines.length <= 1) return doc;
 
   // 結合の角が消える場合、角を生き残る側の行/列に付け替える。
   // この軸の幅が1の結合がその行/列ごと消える場合は結合ごと消す。
@@ -261,11 +270,22 @@ function doDeleteLine(state: GridState, ops: AxisOps, id: string): GridState {
     if (ops.addrPart(parseCellKey(key)) !== id) cells[key] = content;
   }
   const newLines = lines.filter((l) => l.id !== id);
-  const newDoc = pruneDegenerateMerges(
-    ops.withLines({ ...doc, cells, merges }, newLines),
-  );
+  return pruneDegenerateMerges(ops.withLines({ ...doc, cells, merges }, newLines));
+}
+
+function doDeleteLines(state: GridState, ops: AxisOps, ids: string[]): GridState {
+  const doc = state.doc;
+  if (!Array.isArray(ids)) return state;
+  const targets = [...new Set(ids)].filter((id) => ops.index(doc, id) >= 0);
+  if (targets.length === 0) return state;
+  // すべて消すとグリッドが空になる。最低1本は残す(I1)ため操作ごと拒否する
+  if (targets.length >= ops.lines(doc).length) return state;
+
+  // 1本ずつ畳み込むが commitDoc は最後に1回だけ = undo 1手で戻る。
   // 削除位置への選択の載せ替えは commitDoc → fixupUi の relocateAddr が行う
-  return commitDoc(state, newDoc);
+  let next = doc;
+  for (const id of targets) next = removeLine(next, ops, id);
+  return commitDoc(state, next);
 }
 
 function doResizeLine(state: GridState, axis: "row" | "col", id: string, size: number): GridState {
@@ -432,13 +452,13 @@ export function reduce(state: GridState, action: Action): GridState {
       return state.editing === null ? state : { ...state, editing: null };
 
     case "insertRow":
-      return doInsertLine(state, rowOps, action.index);
+      return doInsertLines(state, rowOps, action.index, action.count);
     case "insertCol":
-      return doInsertLine(state, colOps, action.index);
-    case "deleteRow":
-      return doDeleteLine(state, rowOps, action.id);
-    case "deleteCol":
-      return doDeleteLine(state, colOps, action.id);
+      return doInsertLines(state, colOps, action.index, action.count);
+    case "deleteRows":
+      return doDeleteLines(state, rowOps, action.ids);
+    case "deleteCols":
+      return doDeleteLines(state, colOps, action.ids);
     case "resizeRow":
       return doResizeLine(state, "row", action.id, action.height);
     case "resizeCol":
