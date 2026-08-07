@@ -91,6 +91,8 @@ export interface Selection {
 export interface EditingState {
   addr: CellAddr;
   draft: string;
+  /** どのUIが編集の入力を受けているか。フォーカスの奪い合いを防ぐ */
+  where: "cell" | "bar";
 }
 
 export interface GridState {

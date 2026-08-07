@@ -397,16 +397,33 @@ export function reduce(state: GridState, action: Action): GridState {
       return doMoveSelection(commitPendingEdit(state), action.dRow, action.dCol, action.extend);
 
     case "startEdit": {
-      if (!state.selection || state.editing) return state;
+      const where = action.where ?? "cell";
+      // 編集中に別のUI(セル↔数式バー)へ入力が移る場合は、下書きを保ったまま
+      // 受け口だけ差し替える
+      if (state.editing) {
+        return state.editing.where === where
+          ? state
+          : { ...state, editing: { ...state.editing, where } };
+      }
+      if (!state.selection) return state;
       const addr = normalizeAddr(doc, state.selection.anchor);
       if (!addr) return state;
       const draft = action.draft ?? cellRawString(doc, addr);
-      return { ...state, editing: { addr, draft } };
+      return { ...state, editing: { addr, draft, where } };
     }
 
-    case "updateDraft":
-      if (!state.editing || typeof action.draft !== "string") return state;
-      return { ...state, editing: { ...state.editing, draft: action.draft } };
+    case "setDraft": {
+      if (typeof action.draft !== "string") return state;
+      if (state.editing) {
+        return state.editing.draft === action.draft
+          ? state
+          : { ...state, editing: { ...state.editing, draft: action.draft } };
+      }
+      if (!state.selection) return state;
+      const addr = normalizeAddr(doc, state.selection.anchor);
+      if (!addr) return state;
+      return { ...state, editing: { addr, draft: action.draft, where: "cell" } };
+    }
 
     case "commitEdit":
       return commitPendingEdit(state);

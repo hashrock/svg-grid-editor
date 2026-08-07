@@ -3,7 +3,7 @@
 // 編集の確定・破棄の規則は reducer が持つ(選択が動けば自動コミット)ため、
 // ここではイベントを対応するアクションに変換するだけでよい。
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Dispatch } from "react";
 import type { Action } from "../model/actions";
 import {
@@ -28,7 +28,8 @@ import {
 
 const HEADER_W = 44;
 const HEADER_H = 26;
-const RESIZE_GRIP = 5;
+// 掴み代。細すぎると熟練者でも掴み損ねるので境界の前後に余裕を持たせる
+const RESIZE_GRIP = 9;
 
 type ResizeDrag = {
   kind: "row" | "col";
@@ -47,6 +48,8 @@ export function GridView({ state, dispatch }: Props) {
   const { doc, selection, editing } = state;
   const svgRef = useRef<SVGSVGElement>(null);
   const dragAnchor = useRef<CellAddr | null>(null);
+  const editorRef = useRef<HTMLTextAreaElement>(null);
+  const composing = useRef(false);
   // リサイズ中は履歴を汚さないようローカルにプレビューし、確定時のみ dispatch する
   const [resize, setResize] = useState<ResizeDrag | null>(null);
 
@@ -139,6 +142,135 @@ export function GridView({ state, dispatch }: Props) {
         (c) => c.addr.row === selection.anchor.row && c.addr.col === selection.anchor.col,
       )
     : null;
+
+  // ---- キーボード入力の受け口 ----
+  // テキストエリアは常時マウントされ、非編集時もフォーカスを保持する。
+  // IME は変換確定まで keydown に文字を載せてこないため、「押されたキーを見て
+  // 編集を始める」方式では日本語入力を拾えない。入力要素そのものに常に
+  // フォーカスを置き、そこに文字が入ったことを合図に編集を開始する。
+  const editorRect = editingRect ?? anchorRect;
+
+  // テキストエリアは非制御にする。制御コンポーネントにすると、入力が再描画より
+  // 速いときに古い value が DOM を巻き戻して文字が落ちるため。
+  // 代わりに「エディタが報告した値」を pending に積み、モデルがそこに追いつく
+  // 間は DOM に触れない。pending に無い値が来たら外部由来の変更として反映する。
+  const pending = useRef<string[]>([]);
+
+  function reportDraft(value: string) {
+    pending.current.push(value);
+    dispatch({ type: "setDraft", draft: value });
+  }
+
+  useEffect(() => {
+    const el = editorRef.current;
+    if (!el || composing.current) return;
+    const want = editing?.draft ?? "";
+    const i = pending.current.lastIndexOf(want);
+    if (i >= 0) {
+      pending.current.splice(0, i + 1); // モデルが追いついた分を捨てる
+      return; // DOM の方が新しいので触らない
+    }
+    pending.current.length = 0;
+    if (el.value !== want) {
+      el.value = want;
+      // F2・ダブルクリック・数式バー経由の編集開始はキャレットを末尾へ
+      el.setSelectionRange(want.length, want.length);
+    }
+  }, [editing]);
+
+  // 数式バーが編集を受けている間以外は、常にグリッド側がフォーカスを持つ
+  useEffect(() => {
+    if (editing?.where === "bar") return;
+    const el = editorRef.current;
+    if (el && document.activeElement !== el) el.focus({ preventScroll: true });
+  });
+
+  function onEditorInput(e: React.FormEvent<HTMLTextAreaElement>) {
+    reportDraft(e.currentTarget.value);
+  }
+
+  function insertNewline(el: HTMLTextAreaElement) {
+    const s = el.selectionStart;
+    const e = el.selectionEnd;
+    const next = `${el.value.slice(0, s)}\n${el.value.slice(e)}`;
+    el.value = next;
+    el.setSelectionRange(s + 1, s + 1);
+    reportDraft(next);
+  }
+
+  function onEditorKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    // 変換中のキーはすべてIMEのもの(Enterは候補確定であって編集確定ではない)
+    if (e.nativeEvent.isComposing) return;
+    const mod = e.metaKey || e.ctrlKey;
+
+    if (editing) {
+      if (e.key === "Enter" && (e.altKey || e.shiftKey)) {
+        // Excel は Alt+Enter でセル内改行。Shift+Enter も同義として受ける
+        if (e.altKey) {
+          e.preventDefault();
+          insertNewline(e.currentTarget);
+        }
+        return; // Shift+Enter は textarea の既定動作に任せる
+      }
+      if (e.key === "Enter") {
+        e.preventDefault();
+        dispatch({ type: "moveSelection", dRow: 1, dCol: 0, extend: false });
+        return;
+      }
+      if (e.key === "Tab") {
+        e.preventDefault();
+        dispatch({ type: "moveSelection", dRow: 0, dCol: e.shiftKey ? -1 : 1, extend: false });
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        dispatch({ type: "cancelEdit" });
+      }
+      return; // 編集中の矢印・Backspace等は textarea 内のカーソル操作
+    }
+
+    // ---- 非編集時 ----
+    if (mod && e.key.toLowerCase() === "z") {
+      e.preventDefault();
+      dispatch({ type: e.shiftKey ? "redo" : "undo" });
+      return;
+    }
+    if (mod && e.key.toLowerCase() === "y") {
+      e.preventDefault();
+      dispatch({ type: "redo" });
+      return;
+    }
+
+    const arrows: Record<string, [number, number]> = {
+      ArrowUp: [-1, 0],
+      ArrowDown: [1, 0],
+      ArrowLeft: [0, -1],
+      ArrowRight: [0, 1],
+    };
+    if (e.key in arrows) {
+      e.preventDefault();
+      const [dRow, dCol] = arrows[e.key];
+      dispatch({ type: "moveSelection", dRow, dCol, extend: e.shiftKey });
+      return;
+    }
+    if (e.key === "Enter" || e.key === "F2") {
+      e.preventDefault();
+      dispatch({ type: "startEdit" });
+      return;
+    }
+    if (e.key === "Tab") {
+      e.preventDefault();
+      dispatch({ type: "moveSelection", dRow: 0, dCol: e.shiftKey ? -1 : 1, extend: false });
+      return;
+    }
+    if ((e.key === "Delete" || e.key === "Backspace") && selection) {
+      e.preventDefault();
+      dispatch({ type: "clearRange", anchor: selection.anchor, focus: selection.focus });
+      return;
+    }
+    // 印字可能文字・IME入力は preventDefault せず textarea に入れる。
+    // 入った内容が onEditorInput 経由で編集開始のトリガーになる
+  }
 
   // ---- 座標 -> セル ----
 
@@ -234,6 +366,15 @@ export function GridView({ state, dispatch }: Props) {
         height={totalH + 1}
         onPointerMove={onResizeMove}
         onPointerUp={endResize}
+        onMouseDown={(e) => {
+          // 既定の mousedown はフォーカスを body へ移してしまい、常設エディタが
+          // キー入力を受け取れなくなる。編集中のテキストエリア自身へのクリック
+          // (キャレット移動)以外は既定動作を止めてフォーカスを保持する
+          if (e.target !== editorRef.current) {
+            e.preventDefault();
+            editorRef.current?.focus({ preventScroll: true });
+          }
+        }}
       >
         {/* セル背景 + 選択ハイライト */}
         <g
@@ -339,6 +480,8 @@ export function GridView({ state, dispatch }: Props) {
           <rect x={0} y={0} width={totalW} height={HEADER_H} fill="#f8f9fa" />
           {doc.cols.map((c, ci) => (
             <g key={c.id}>
+              {/* fill="none" だと内側がヒットテスト対象外になるため
+                  pointerEvents="all" で矩形全体をクリック可能にする */}
               <rect
                 x={xs[ci] + 0.5}
                 y={0.5}
@@ -346,6 +489,8 @@ export function GridView({ state, dispatch }: Props) {
                 height={HEADER_H}
                 fill="none"
                 stroke="#dadce0"
+                pointerEvents="all"
+                cursor="pointer"
                 onClick={() =>
                   dispatch({
                     type: "setSelection",
@@ -364,15 +509,6 @@ export function GridView({ state, dispatch }: Props) {
               >
                 {colLabel(ci)}
               </text>
-              <rect
-                x={xs[ci + 1] - RESIZE_GRIP / 2}
-                y={0}
-                width={RESIZE_GRIP}
-                height={HEADER_H}
-                fill="transparent"
-                cursor="col-resize"
-                onPointerDown={(e) => beginResize(e, "col", c.id, c.width)}
-              />
             </g>
           ))}
         </g>
@@ -389,6 +525,8 @@ export function GridView({ state, dispatch }: Props) {
                 height={rowHeights[ri]}
                 fill="none"
                 stroke="#dadce0"
+                pointerEvents="all"
+                cursor="pointer"
                 onClick={() =>
                   dispatch({
                     type: "setSelection",
@@ -407,55 +545,66 @@ export function GridView({ state, dispatch }: Props) {
               >
                 {ri + 1}
               </text>
-              <rect
-                x={0}
-                y={ys[ri + 1] - RESIZE_GRIP / 2}
-                width={HEADER_W}
-                height={RESIZE_GRIP}
-                fill="transparent"
-                cursor="row-resize"
-                onPointerDown={(e) => beginResize(e, "row", r.id, r.height)}
-              />
             </g>
           ))}
           <rect x={0.5} y={0.5} width={HEADER_W} height={HEADER_H} fill="#f8f9fa" stroke="#dadce0" />
         </g>
 
-        {/* 編集オーバーレイ: foreignObject で input を重ねる */}
-        {editing && editingRect && (
+        {/* リサイズの掴み代。ヘッダ矩形は pointerEvents="all" なので、隣接ヘッダに
+            下半分を覆われないよう全ヘッダより後ろ(最前面)にまとめて描く */}
+        <g>
+          {doc.cols.map((c, ci) => (
+            <rect
+              key={`cg-${c.id}`}
+              x={xs[ci + 1] - RESIZE_GRIP / 2}
+              y={0}
+              width={RESIZE_GRIP}
+              height={HEADER_H}
+              fill="transparent"
+              cursor="col-resize"
+              onPointerDown={(e) => beginResize(e, "col", c.id, c.width)}
+            />
+          ))}
+          {doc.rows.map((r, ri) => (
+            <rect
+              key={`rg-${r.id}`}
+              x={0}
+              y={ys[ri + 1] - RESIZE_GRIP / 2}
+              width={HEADER_W}
+              height={RESIZE_GRIP}
+              fill="transparent"
+              cursor="row-resize"
+              onPointerDown={(e) => beginResize(e, "row", r.id, r.height)}
+            />
+          ))}
+        </g>
+
+        {/* 編集オーバーレイ。非編集時も1pxで常駐しフォーカスとIMEを受け続ける */}
+        {editorRect && (
           <foreignObject
-            x={editingRect.x}
-            y={editingRect.y}
-            width={editingRect.w + 1}
-            height={Math.max(editingRect.h + 1, CELL_LINE_HEIGHT + CELL_PAD * 2)}
+            x={editorRect.x}
+            y={editorRect.y}
+            width={editing ? editorRect.w + 1 : 1}
+            height={
+              editing ? Math.max(editorRect.h + 1, CELL_LINE_HEIGHT + CELL_PAD * 2) : 1
+            }
           >
             <textarea
-              className="cell-editor"
-              value={editing.draft}
-              autoFocus
-              onFocus={(e) => {
-                const len = e.currentTarget.value.length;
-                e.currentTarget.setSelectionRange(len, len);
+              ref={editorRef}
+              className={editing ? "cell-editor" : "cell-editor hidden"}
+              defaultValue=""
+              onInput={onEditorInput}
+              onKeyDown={onEditorKeyDown}
+              onCompositionStart={() => {
+                composing.current = true;
               }}
-              onChange={(e) => dispatch({ type: "updateDraft", draft: e.target.value })}
-              onBlur={() => dispatch({ type: "commitEdit" })}
-              onKeyDown={(e) => {
-                e.stopPropagation();
-                // moveSelection は進行中の編集を自動コミットする(reducerの契約)
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  dispatch({ type: "moveSelection", dRow: 1, dCol: 0, extend: false });
-                } else if (e.key === "Tab") {
-                  e.preventDefault();
-                  dispatch({
-                    type: "moveSelection",
-                    dRow: 0,
-                    dCol: e.shiftKey ? -1 : 1,
-                    extend: false,
-                  });
-                } else if (e.key === "Escape") {
-                  dispatch({ type: "cancelEdit" });
-                }
+              onCompositionEnd={(e) => {
+                composing.current = false;
+                reportDraft(e.currentTarget.value);
+              }}
+              onBlur={() => {
+                // 数式バーへ移る場合は commitEdit しない(下書きを引き継ぐ)
+                if (editing?.where === "cell") dispatch({ type: "commitEdit" });
               }}
             />
           </foreignObject>

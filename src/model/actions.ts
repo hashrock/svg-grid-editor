@@ -14,8 +14,11 @@ export type Action =
   | { type: "clearSelection" }
   | { type: "moveSelection"; dRow: number; dCol: number; extend: boolean }
   // 編集モード
-  | { type: "startEdit"; draft?: string }
-  | { type: "updateDraft"; draft: string }
+  | { type: "startEdit"; draft?: string; where?: "cell" | "bar" }
+  // 入力欄の現在値をそのまま渡す。非編集中なら選択セルの編集を開始する。
+  // ビュー側が「編集中かどうか」を判断せずに済むので、高速入力で状態の
+  // 読み取りが古くなっても文字が落ちない
+  | { type: "setDraft"; draft: string }
   | { type: "commitEdit" }
   | { type: "cancelEdit" }
   // 行・列

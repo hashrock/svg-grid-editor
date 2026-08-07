@@ -9,70 +9,20 @@ import "./App.css";
 export default function App() {
   const [state, dispatch] = useReducer(reduce, undefined, () => createInitialState());
   const { doc, selection, editing } = state;
-  const containerRef = useRef<HTMLDivElement>(null);
+  const barRef = useRef<HTMLInputElement>(null);
 
-  // 編集が終わったら(textarea がアンマウントされたら)キーボード操作を
-  // 受けるコンテナへフォーカスを戻す。編集終了の全経路に共通で効く
+  // キーボード操作は GridView 内の常設エディタが一括で受ける。
+  // ここは数式バーが編集を受け持っている間のフォーカスだけを面倒見る
   useEffect(() => {
-    if (!editing) containerRef.current?.focus();
-  }, [editing]);
+    if (editing?.where === "bar") barRef.current?.focus();
+  }, [editing?.where]);
 
   const anchorRi = selection ? rowIndex(doc, selection.anchor.row) : -1;
   const anchorCi = selection ? colIndex(doc, selection.anchor.col) : -1;
   const anchorRaw = selection ? cellRawString(doc, selection.anchor) : "";
 
-  function onKeyDown(e: React.KeyboardEvent) {
-    if (editing) return; // 編集中は textarea 側が処理する
-
-    const mod = e.metaKey || e.ctrlKey;
-    if (mod && e.key.toLowerCase() === "z") {
-      dispatch({ type: e.shiftKey ? "redo" : "undo" });
-      e.preventDefault();
-      return;
-    }
-    if (mod && e.key.toLowerCase() === "y") {
-      dispatch({ type: "redo" });
-      e.preventDefault();
-      return;
-    }
-
-    const arrows: Record<string, [number, number]> = {
-      ArrowUp: [-1, 0],
-      ArrowDown: [1, 0],
-      ArrowLeft: [0, -1],
-      ArrowRight: [0, 1],
-    };
-    if (e.key in arrows) {
-      const [dRow, dCol] = arrows[e.key];
-      dispatch({ type: "moveSelection", dRow, dCol, extend: e.shiftKey });
-      e.preventDefault();
-      return;
-    }
-
-    if (e.key === "Enter" || e.key === "F2") {
-      dispatch({ type: "startEdit" });
-      e.preventDefault();
-      return;
-    }
-    if (e.key === "Tab") {
-      dispatch({ type: "moveSelection", dRow: 0, dCol: e.shiftKey ? -1 : 1, extend: false });
-      e.preventDefault();
-      return;
-    }
-    if ((e.key === "Delete" || e.key === "Backspace") && selection) {
-      dispatch({ type: "clearRange", anchor: selection.anchor, focus: selection.focus });
-      e.preventDefault();
-      return;
-    }
-    // 印字可能文字で編集開始(内容を置き換える)
-    if (e.key.length === 1 && !mod) {
-      dispatch({ type: "startEdit", draft: e.key });
-      e.preventDefault();
-    }
-  }
-
   return (
-    <div className="app" ref={containerRef} tabIndex={0} onKeyDown={onKeyDown}>
+    <div className="app">
       <div className="toolbar">
         <button onClick={() => dispatch({ type: "undo" })} disabled={state.past.length === 0}>
           ⌘Z 元に戻す
@@ -140,14 +90,33 @@ export default function App() {
         <span className="addr">
           {anchorRi >= 0 && anchorCi >= 0 ? addrLabel(anchorRi, anchorCi) : ""}
         </span>
-        <span className="raw">{editing ? editing.draft : anchorRaw}</span>
+        <input
+          ref={barRef}
+          className="raw"
+          type="text"
+          disabled={!selection}
+          value={editing ? editing.draft : anchorRaw}
+          onFocus={() => dispatch({ type: "startEdit", where: "bar" })}
+          onChange={(e) => dispatch({ type: "setDraft", draft: e.target.value })}
+          onKeyDown={(e) => {
+            if (e.nativeEvent.isComposing) return;
+            if (e.key === "Enter") {
+              e.preventDefault();
+              dispatch({ type: "moveSelection", dRow: 1, dCol: 0, extend: false });
+            } else if (e.key === "Escape") {
+              e.preventDefault();
+              dispatch({ type: "cancelEdit" });
+            }
+          }}
+        />
       </div>
 
       <GridView state={state} dispatch={dispatch} />
 
       <div className="hint">
         ダブルクリック / Enter / F2 で編集、=A1+B2 や =SUM(A1:B3) で数式、
-        ヘッダ境界ドラッグでリサイズ、Shift+矢印で範囲選択
+        Alt+Enter でセル内改行、ヘッダのクリックで行列選択・境界ドラッグでリサイズ、
+        Shift+矢印で範囲選択
       </div>
     </div>
   );

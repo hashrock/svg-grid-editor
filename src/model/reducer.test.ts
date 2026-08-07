@@ -40,7 +40,7 @@ describe("セル編集", () => {
       s,
       { type: "setSelection", anchor: addr(s, 2, 2), focus: addr(s, 2, 2) },
       { type: "startEdit", draft: "x" },
-      { type: "updateDraft", draft: "xyz" },
+      { type: "setDraft", draft: "xyz" },
       { type: "commitEdit" },
     );
     expect(valueAt(s, 2, 2)).toBe("xyz");
@@ -55,6 +55,39 @@ describe("セル編集", () => {
       { type: "cancelEdit" },
     );
     expect(valueAt(s, 0, 0)).toBe("");
+  });
+
+  it("編集の受け口(セル/数式バー)を下書きを保ったまま切り替えられる", () => {
+    let s = createInitialState(5, 5);
+    s = run(s, { type: "startEdit", draft: "abc" });
+    expect(s.editing?.where).toBe("cell");
+    s = run(s, { type: "startEdit", where: "bar" });
+    expect(s.editing).toEqual({ addr: addr(s, 0, 0), draft: "abc", where: "bar" });
+    s = run(s, { type: "startEdit", where: "cell" });
+    expect(s.editing?.where).toBe("cell");
+    expect(s.editing?.draft).toBe("abc"); // 切り替えで下書きは失われない
+  });
+
+  it("数式バーから編集を開始すると既存内容が下書きになる", () => {
+    let s = createInitialState(5, 5);
+    s = run(
+      s,
+      { type: "setCell", addr: addr(s, 0, 0), raw: "=1+2" },
+      { type: "startEdit", where: "bar" },
+    );
+    expect(s.editing).toEqual({ addr: addr(s, 0, 0), draft: "=1+2", where: "bar" });
+  });
+
+  it("選択が移動すると編集中の内容は破棄されず確定される", () => {
+    let s = createInitialState(5, 5);
+    s = run(
+      s,
+      { type: "startEdit", draft: "書きかけ" },
+      { type: "moveSelection", dRow: 1, dCol: 0, extend: false },
+    );
+    expect(valueAt(s, 0, 0)).toBe("書きかけ");
+    expect(s.editing).toBeNull();
+    expect(s.selection?.anchor).toEqual(addr(s, 1, 0));
   });
 });
 

@@ -61,8 +61,18 @@
 }
 
 .formula-bar .raw {
+  flex: 1;
   font-family: ui-monospace, monospace;
-  white-space: pre;
+  font-size: 13px;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: #1a1a1a;
+  padding: 2px 0;
+}
+
+.formula-bar .raw:focus {
+  background: #f1f6fd;
 }
 
 .grid-scroll {
@@ -89,6 +99,14 @@
   line-height: 18px;
   background: #fff;
   color: #1a1a1a;
+}
+
+/* 非編集時: 見えないままフォーカスとIMEを受け続けるための常駐エディタ */
+.cell-editor.hidden {
+  border: none;
+  padding: 0;
+  opacity: 0;
+  pointer-events: none;
 }
 
 .hint {
