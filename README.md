@@ -15,6 +15,8 @@ pnpm test   # ユニット + property-based テスト
 pnpm lint
 ```
 
+作った順序・検証のやり方・そこで分かったことは [WORKFLOW.md](WORKFLOW.md) にまとめてある。
+
 ## アーキテクチャ
 
 「モデル → 不変条件 → アクション → reducer → テスト → レンダラ」の順に作られており、
