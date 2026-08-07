@@ -169,7 +169,68 @@ describe("行列操作と参照の追従(安定IDの本領)", () => {
     expect(cell.kind === "formula" && formatExpr(s.doc, cell.ast)).toBe("A4");
   });
 
-  it("参照先の行を削除すると #REF! になる", () => {
+  it("SUMのレンジは端の行を消しても #REF! にならず縮む(Excel準拠)", () => {
+    let s = createInitialState(6, 3);
+    s = run(
+      s,
+      { type: "setCell", addr: addr(s, 0, 0), raw: "1" },
+      { type: "setCell", addr: addr(s, 1, 0), raw: "2" },
+      { type: "setCell", addr: addr(s, 2, 0), raw: "3" },
+      { type: "setCell", addr: addr(s, 4, 0), raw: "=SUM(A1:A3)" }, // A5
+    );
+    expect(valueAt(s, 4, 0)).toBe("6");
+
+    // 先頭(レンジのr0角)を削除 → SUM(A1:A2) = 2+3 = 5
+    s = run(s, { type: "deleteRows", ids: [s.doc.rows[0].id] });
+    expect(valueAt(s, 3, 0)).toBe("5");
+    const cell = s.doc.cells[cellKey(addr(s, 3, 0))];
+    expect(cell.kind === "formula" && formatExpr(s.doc, cell.ast)).toBe("SUM(A1:A2)");
+
+    // 末尾(レンジのr1角)を削除 → SUM(A1:A1) = 2
+    s = run(s, { type: "deleteRows", ids: [s.doc.rows[1].id] });
+    expect(valueAt(s, 2, 0)).toBe("2");
+  });
+
+  it("SUMのレンジの内側の行を消してもレンジは保たれる", () => {
+    let s = createInitialState(6, 3);
+    s = run(
+      s,
+      { type: "setCell", addr: addr(s, 0, 0), raw: "1" },
+      { type: "setCell", addr: addr(s, 1, 0), raw: "2" },
+      { type: "setCell", addr: addr(s, 2, 0), raw: "3" },
+      { type: "setCell", addr: addr(s, 4, 0), raw: "=SUM(A1:A3)" },
+      { type: "deleteRows", ids: [s.doc.rows[1].id] }, // 真ん中の 2 を消す
+    );
+    expect(valueAt(s, 3, 0)).toBe("4"); // 1 + 3
+  });
+
+  it("レンジが丸ごと消えたときだけ #REF! になる", () => {
+    let s = createInitialState(6, 3);
+    s = run(
+      s,
+      { type: "setCell", addr: addr(s, 0, 0), raw: "1" },
+      { type: "setCell", addr: addr(s, 1, 0), raw: "2" },
+      { type: "setCell", addr: addr(s, 4, 0), raw: "=SUM(A1:A2)" },
+    );
+    s = run(s, { type: "deleteRows", ids: [s.doc.rows[0].id, s.doc.rows[1].id] });
+    expect(valueAt(s, 2, 0)).toBe("#REF!");
+  });
+
+  it("列方向でも同じくレンジが縮む", () => {
+    let s = createInitialState(3, 6);
+    s = run(
+      s,
+      { type: "setCell", addr: addr(s, 0, 0), raw: "1" },
+      { type: "setCell", addr: addr(s, 0, 1), raw: "2" },
+      { type: "setCell", addr: addr(s, 0, 2), raw: "3" },
+      { type: "setCell", addr: addr(s, 0, 4), raw: "=SUM(A1:C1)" },
+    );
+    expect(valueAt(s, 0, 4)).toBe("6");
+    s = run(s, { type: "deleteCols", ids: [s.doc.cols[0].id] });
+    expect(valueAt(s, 0, 3)).toBe("5");
+  });
+
+  it("単独セル参照は Excel 同様そのまま #REF! になる", () => {
     let s = createInitialState(5, 5);
     const rowToDelete = s.doc.rows[2].id;
     s = run(

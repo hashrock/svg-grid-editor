@@ -149,7 +149,7 @@ export default function App() {
       <div className="hint">
         ダブルクリック / Enter / F2 で編集、=A1+B2 や =SUM(A1:B3) で数式、
         Alt+Enter でセル内改行、ヘッダのドラッグで行列選択・境界ドラッグでリサイズ、
-        Shift+矢印で範囲選択。挿入・削除は選択範囲がそのまま対象
+        Shift+矢印 / Shift+クリックで範囲選択。挿入・削除は選択範囲がそのまま対象
       </div>
     </div>
   );

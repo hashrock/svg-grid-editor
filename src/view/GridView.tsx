@@ -295,8 +295,10 @@ export function GridView({ state, dispatch }: Props) {
     const p = svgPoint(e);
     const addr = cellAtPoint(p.x, p.y);
     if (!addr) return;
-    dragAnchor.current = addr;
-    dispatch({ type: "setSelection", anchor: addr, focus: addr });
+    // Shift+クリックは既存の起点を保ったまま到達点だけ差し替える(範囲を伸ばす)
+    const anchor = e.shiftKey && selection ? selection.anchor : addr;
+    dragAnchor.current = anchor;
+    dispatch({ type: "setSelection", anchor, focus: addr });
     (e.target as Element).setPointerCapture?.(e.pointerId);
   }
 
@@ -513,9 +515,10 @@ export function GridView({ state, dispatch }: Props) {
                 stroke="#dadce0"
                 pointerEvents="all"
                 cursor="pointer"
-                onPointerDown={() => {
-                  headerDrag.current = { kind: "col", anchor: c.id };
-                  selectColRange(c.id, c.id);
+                onPointerDown={(e) => {
+                  const anchor = e.shiftKey && selection ? selection.anchor.col : c.id;
+                  headerDrag.current = { kind: "col", anchor };
+                  selectColRange(anchor, c.id);
                 }}
                 onPointerEnter={() => {
                   const d = headerDrag.current;
@@ -550,9 +553,10 @@ export function GridView({ state, dispatch }: Props) {
                 stroke="#dadce0"
                 pointerEvents="all"
                 cursor="pointer"
-                onPointerDown={() => {
-                  headerDrag.current = { kind: "row", anchor: r.id };
-                  selectRowRange(r.id, r.id);
+                onPointerDown={(e) => {
+                  const anchor = e.shiftKey && selection ? selection.anchor.row : r.id;
+                  headerDrag.current = { kind: "row", anchor };
+                  selectRowRange(anchor, r.id);
                 }}
                 onPointerEnter={() => {
                   const d = headerDrag.current;

@@ -12,10 +12,13 @@ import {
   type CellAddr,
   type CellContent,
   type CellKey,
+  type ColId,
   type ColMeta,
+  type Expr,
   type GridDoc,
   type GridState,
   type MergeRect,
+  type RowId,
   type RowMeta,
   type Selection,
   MAX_HISTORY,
@@ -243,31 +246,79 @@ function doInsertLines(
   );
 }
 
+/**
+ * ID対角の矩形(結合セル・数式のレンジ共通の形)から、削除される行/列を除いた
+ * ものを返す。角が消える場合は生き残る側へ内側に寄せる = 範囲が縮む。
+ * その軸の幅が1でその1本が消える場合は矩形ごと消えるので null。
+ */
+function shrinkRect<T extends { r0: RowId; c0: ColId; r1: RowId; c1: ColId }>(
+  doc: GridDoc,
+  ops: AxisOps,
+  id: string,
+  rect: T,
+): T | null {
+  const b = rectBounds(doc, rect);
+  if (!b) return rect; // 既に壊れている参照はそのまま
+  const lines = ops.lines(doc);
+  if (ops.boundsLo(b) === ops.boundsHi(b) && rect[ops.lo] === id) return null;
+  let lo = rect[ops.lo];
+  let hi = rect[ops.hi];
+  if (lo === id) lo = lines[ops.boundsLo(b) + 1].id;
+  if (hi === id) hi = lines[ops.boundsHi(b) - 1].id;
+  return lo === rect[ops.lo] && hi === rect[ops.hi]
+    ? rect
+    : ({ ...rect, [ops.lo]: lo, [ops.hi]: hi } as T);
+}
+
+/**
+ * 行/列の削除に合わせて数式のレンジを縮める。Excel と同じく
+ * SUM(A1:A3) の1行目を消しても #REF! にはせず SUM(A1:A2) に縮む。
+ * レンジが丸ごと消えたときだけ #REF! になる。
+ * 単独セル参照(=A3 など)は Excel 同様そのまま #REF! にする(評価側で判定)。
+ */
+function repairExpr(doc: GridDoc, ops: AxisOps, id: string, e: Expr): Expr {
+  switch (e.type) {
+    case "sum": {
+      const shrunk = shrinkRect(doc, ops, id, e.range);
+      if (!shrunk) return { type: "refError" };
+      return shrunk === e.range ? e : { type: "sum", range: shrunk };
+    }
+    case "neg": {
+      const inner = repairExpr(doc, ops, id, e.expr);
+      return inner === e.expr ? e : { type: "neg", expr: inner };
+    }
+    case "bin": {
+      const left = repairExpr(doc, ops, id, e.left);
+      const right = repairExpr(doc, ops, id, e.right);
+      return left === e.left && right === e.right
+        ? e
+        : { type: "bin", op: e.op, left, right };
+    }
+    default:
+      return e;
+  }
+}
+
 /** 1本だけ削除した doc を返す純関数。削除できないときは doc をそのまま返す */
 function removeLine(doc: GridDoc, ops: AxisOps, id: string): GridDoc {
   const lines = ops.lines(doc);
   if (ops.index(doc, id) < 0 || lines.length <= 1) return doc;
 
-  // 結合の角が消える場合、角を生き残る側の行/列に付け替える。
-  // この軸の幅が1の結合がその行/列ごと消える場合は結合ごと消す。
   const merges: MergeRect[] = [];
   for (const m of doc.merges) {
-    const b = rectBounds(doc, m)!;
-    if (ops.boundsLo(b) === ops.boundsHi(b) && m[ops.lo] === id) continue;
-    let lo = m[ops.lo];
-    let hi = m[ops.hi];
-    if (lo === id) lo = lines[ops.boundsLo(b) + 1].id;
-    if (hi === id) hi = lines[ops.boundsHi(b) - 1].id;
-    merges.push(
-      lo === m[ops.lo] && hi === m[ops.hi]
-        ? m
-        : ({ ...m, [ops.lo]: lo, [ops.hi]: hi } as MergeRect),
-    );
+    const shrunk = shrinkRect(doc, ops, id, m);
+    if (shrunk) merges.push(shrunk);
   }
 
   const cells: Record<CellKey, CellContent> = {};
   for (const [key, content] of Object.entries(doc.cells)) {
-    if (ops.addrPart(parseCellKey(key)) !== id) cells[key] = content;
+    if (ops.addrPart(parseCellKey(key)) === id) continue;
+    if (content.kind === "formula") {
+      const ast = repairExpr(doc, ops, id, content.ast);
+      cells[key] = ast === content.ast ? content : { kind: "formula", ast };
+    } else {
+      cells[key] = content;
+    }
   }
   const newLines = lines.filter((l) => l.id !== id);
   return pruneDegenerateMerges(ops.withLines({ ...doc, cells, merges }, newLines));
